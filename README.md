@@ -1,4 +1,4 @@
-# SSM - Sour CLI Sys Monitor
+# SSM - Sour CLI Sys Monitor Version: Aphrodite
 
 A beginner-friendly terminal-based system monitor for Ubuntu/Linux.
 
