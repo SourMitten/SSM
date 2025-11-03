@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Install SSM globally on Ubuntu
+# Install SSM globally on Ubuntu/Linux
 
 # Make launcher executable
 chmod +x ssm
 
-# Copy launcher to /usr/local/bin so it can be run anywhere
-sudo cp ssm /usr/local/bin/ssm
-
-echo "SSM installed globally!"
-echo "You can now run 'ssm' from any terminal."
+# Copy launcher to /usr/local/bin
+echo "Installing SSM globally..."
+if sudo cp ssm /usr/local/bin/ssm; then
+    echo "SSM installed globally! You can now run 'ssm' from any terminal."
+else
+    echo "Failed to copy launcher to /usr/local/bin. Try running: sudo bash install.sh"
+fi
