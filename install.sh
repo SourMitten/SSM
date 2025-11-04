@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Install SSM globally on Ubuntu/Linux
 
-# Make launcher executable and copy the ssm pkg to /usr/local/bin
+# Make launcher and uninstall script executable
 chmod +x ssm
-
+chmod +x uninstall.sh
 # Copy the program to /usr/local/bin for launcher to work right
 sudo mkdir /usr/local/bin/ssm_pkg
 sudo touch /usr/local/bin/ssm_pkg/main.py
