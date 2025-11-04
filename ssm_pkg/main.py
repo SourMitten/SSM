@@ -14,8 +14,8 @@ from rich.style import Style
 import keyboard  # pip install keyboard
 
 console = Console()
-prev_net = None  # previous net counters
-kill_requested = False
+prev_net = None
+kill_prompt_active = False  # Pause Live updates while prompting
 
 # ---------------- Helper Functions ----------------
 def get_color(value: float) -> str:
@@ -78,14 +78,14 @@ def get_top_processes(limit=10):
     procs = sorted(procs, key=lambda p: p['cpu_percent'], reverse=True)
     return procs[:limit]
 
-# ---------------- Layout Builders ----------------
+# ---------------- Layout ----------------
 def create_layout():
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=4),
         Layout(name="bars", size=6),
         Layout(name="network", size=3),
-        Layout(name="bottom")  # combine processes + disk preview
+        Layout(name="bottom")
     )
 
     layout["bottom"].split_row(
@@ -174,7 +174,6 @@ def build_disk_preview():
             continue
     return Panel(table, title="Disk Preview", style="bold yellow")
 
-# ---------------- Render ----------------
 def render_layout(layout, stats, top_procs):
     header_text = Text(f"Sour CLI Sys Monitor — {stats['hostname']} | Uptime: {stats['uptime']}", style="bold green")
     commands_text = Text("Commands: Ctrl+C = Exit | Press 'k' to kill a process", style="bold cyan")
@@ -187,11 +186,13 @@ def render_layout(layout, stats, top_procs):
 
 # ---------------- Kill Process ----------------
 def kill_process_prompt(top_procs):
-    global kill_requested
-    kill_requested = True
+    global kill_prompt_active
+    kill_prompt_active = True
+
     console.print("\n[bold yellow]Kill a process[/bold yellow]")
     for i, p in enumerate(top_procs, 1):
         console.print(f"[cyan]{i}[/cyan]: {p['name']} (PID {p['pid']}) CPU {p['cpu_percent']:.1f}%")
+
     try:
         choice = int(console.input("Enter process number to kill (0 to cancel): "))
         if choice == 0:
@@ -205,7 +206,7 @@ def kill_process_prompt(top_procs):
     except psutil.AccessDenied:
         console.print("[red]Permission denied[/red]")
     finally:
-        kill_requested = False
+        kill_prompt_active = False
 
 # ---------------- Main ----------------
 def main():
@@ -221,7 +222,7 @@ def main():
     with Live(layout, refresh_per_second=1, screen=True):
         try:
             while True:
-                if not kill_requested:  # don't update Live while in kill prompt
+                if not kill_prompt_active:
                     stats = get_system_stats()
                     top_procs = get_top_processes()
                     render_layout(layout, stats, top_procs)
