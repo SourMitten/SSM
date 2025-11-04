@@ -18,7 +18,7 @@ A beginner-friendly terminal-based system monitor for Ubuntu/Linux.
 ## Installation
 
 1. **Clone the repository:**
-git clone https://github.com/<your-username>/SSM.git
+git clone https://github.com/SourMitten/SSM.git
 
 2. **Install Python dependencies:**
 pip install -r /SSM/requirements.txt
