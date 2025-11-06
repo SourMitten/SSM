@@ -11,12 +11,10 @@ from rich.panel import Panel
 from rich.layout import Layout
 from rich.text import Text
 from rich.style import Style
-import keyboard  # pip install keyboard
+import keyboard
 
 console = Console()
 prev_net = None
-prev_time = None
-kill_prompt_active = False
 
 # ---------------- Helper Functions ----------------
 def get_color(value: float) -> str:
@@ -41,7 +39,7 @@ def format_bytes_per_sec(bps: float) -> str:
         return f"{bps:.0f} B/s"
 
 def get_system_stats():
-    global prev_net, prev_time
+    global prev_net
     cpu = psutil.cpu_percent(interval=None)
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
@@ -51,17 +49,13 @@ def get_system_stats():
     uptime = str(timedelta(seconds=uptime_seconds)).split('.')[0]
     hostname = socket.gethostname()
 
-    current_time = time.time()
-    interval = current_time - prev_time if prev_time else 1.0
     if prev_net:
-        sent_rate = float(net.bytes_sent - prev_net.bytes_sent) / interval
-        recv_rate = float(net.bytes_recv - prev_net.bytes_recv) / interval
+        sent_rate = (net.bytes_sent - prev_net.bytes_sent)
+        recv_rate = (net.bytes_recv - prev_net.bytes_recv)
     else:
-        sent_rate = 0.0
-        recv_rate = 0.0
-
+        sent_rate = 0
+        recv_rate = 0
     prev_net = net
-    prev_time = current_time
 
     return {
         "cpu": cpu,
@@ -92,10 +86,9 @@ def create_layout():
         Layout(name="network", size=3),
         Layout(name="bottom")
     )
-
     layout["bottom"].split_row(
-        Layout(name="processes", ratio=3),
-        Layout(name="disk_preview", ratio=2)
+        Layout(name="processes", ratio=60),
+        Layout(name="disk_preview", ratio=40)
     )
     return layout
 
@@ -132,9 +125,8 @@ def build_bars(stats):
 
 def build_network_table(stats):
     net_table = Table.grid(expand=True)
-    net_table.add_column(justify="right")
-    net_table.add_column(justify="right")
-    net_table.add_row("Upload", "Download")
+    net_table.add_column("Upload", justify="right")
+    net_table.add_column("Download", justify="right")
     net_table.add_row(
         format_bytes_per_sec(stats["net_sent_rate"]),
         format_bytes_per_sec(stats["net_recv_rate"])
@@ -161,8 +153,9 @@ def build_process_table(top_procs):
 def build_disk_preview():
     disks = psutil.disk_partitions(all=False)
     table = Table(expand=True, show_header=True, header_style="bold magenta")
-    table.add_column("Dev")
-    table.add_column("Mount")
+    table.add_column("Device")
+    table.add_column("Mountpoint")
+    table.add_column("FS Type")
     table.add_column("Used %", justify="right")
 
     for d in disks:
@@ -171,6 +164,7 @@ def build_disk_preview():
             table.add_row(
                 d.device,
                 d.mountpoint,
+                d.fstype,
                 f"{usage.percent:.0f}%"
             )
         except PermissionError:
@@ -181,7 +175,6 @@ def render_layout(layout, stats, top_procs):
     header_text = Text(f"Sour CLI Sys Monitor — {stats['hostname']} | Uptime: {stats['uptime']}", style="bold green")
     commands_text = Text("Commands: Ctrl+C = Exit | Press 'k' to kill a process", style="bold cyan")
     layout["header"].update(Panel(header_text + "\n" + commands_text, style="bold white"))
-
     layout["bars"].update(build_bars(stats))
     layout["network"].update(build_network_table(stats))
     layout["processes"].update(build_process_table(top_procs))
@@ -190,79 +183,54 @@ def render_layout(layout, stats, top_procs):
 # ---------------- Kill Process ----------------
 def kill_proc_tree(pid):
     try:
-        proc = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        console.print(f"[yellow]Process {pid} does not exist[/yellow]")
-        return
-
-    # Kill children first
-    children = proc.children(recursive=True)
-    for child in children:
-        try:
-            child.terminate()
-        except psutil.NoSuchProcess:
-            continue
-
-    gone, alive = psutil.wait_procs(children, timeout=3)
-    for p in alive:
-        try:
-            p.kill()
-        except psutil.NoSuchProcess:
-            continue
-
-    # Kill parent
-    try:
-        proc.terminate()
-        proc.wait(timeout=3)
-    except psutil.TimeoutExpired:
-        try:
-            proc.kill()
-        except psutil.NoSuchProcess:
-            pass
-    except psutil.AccessDenied:
-        console.print(f"[red]Access denied to kill process {pid}[/red]")
+        parent = psutil.Process(pid)
+        children = parent.children(recursive=True)
+        for child in children:
+            child.kill()
+        parent.kill()
+        psutil.wait_procs(children, timeout=3)
+    except Exception as e:
+        console.print(f"[red]Error killing process: {e}[/red]")
 
 def kill_process_prompt(top_procs, live):
-    global kill_prompt_active
-    kill_prompt_active = True
-    live.stop()
+    live.stop()  # Pause screen
     console.print("\n[bold yellow]Kill a process[/bold yellow]")
-
     for i, p in enumerate(top_procs, 1):
-        name = p["name"][:30] if p["name"] else "N/A"
-        console.print(f"[cyan]{i}[/cyan]: {name} (PID {p['pid']}) CPU {p['cpu_percent']:.1f}%")
+        console.print(f"[cyan]{i}[/cyan]: {p['name']} (PID {p['pid']}) CPU {p['cpu_percent']:.1f}%")
 
     try:
         choice = int(console.input("Enter process number to kill (0 to cancel): "))
         if choice == 0:
-            console.print("[green]Cancelled[/green]")
+            console.print("[yellow]Canceled.[/yellow]")
         else:
             proc_info = top_procs[choice - 1]
             kill_proc_tree(proc_info['pid'])
-            console.print(f"[green]Process tree {proc_info['name']} (PID {proc_info['pid']}) terminated[/green]")
+            console.print(f"[green]Killed {proc_info['name']} (PID {proc_info['pid']})[/green]")
     except (ValueError, IndexError):
         console.print("[red]Invalid selection[/red]")
+    except psutil.AccessDenied:
+        console.print("[red]Permission denied[/red]")
     finally:
-        kill_prompt_active = False
-        live.start()
+        time.sleep(1)
+        live.start()  # Resume screen
 
 # ---------------- Main ----------------
 def main():
-    global prev_net, prev_time
+    global prev_net
     prev_net = psutil.net_io_counters()
-    prev_time = time.time()
     time.sleep(1)
 
     layout = create_layout()
-
     with Live(layout, refresh_per_second=1, screen=True) as live:
-        keyboard.add_hotkey('k', lambda: kill_process_prompt(get_top_processes(), live))
         try:
             while True:
-                if not kill_prompt_active:
-                    stats = get_system_stats()
-                    top_procs = get_top_processes()
-                    render_layout(layout, stats, top_procs)
+                stats = get_system_stats()
+                top_procs = get_top_processes()
+                render_layout(layout, stats, top_procs)
+
+                if keyboard.is_pressed('k'):
+                    kill_process_prompt(top_procs, live)
+
                 time.sleep(1)
         except KeyboardInterrupt:
             console.print("\n[red]Exiting Sour CLI Sys Monitor...[/red]")
