@@ -32,4 +32,12 @@ if [[ -d "$CONFIG_DIR" ]]; then
     echo "Removed user config directory at $CONFIG_DIR"
 fi
 
+rm dir -rf ./SSM/.git
+rm -f ./SSM/.gitignore
+rm -f ./SSM/install.sh
+rm -f ./SSM/README.md
+rm -f ./SSM/requirements.txt
+rm -f ./SSM/ssm
+rm dir -rf ./SSM/ssm_pkg
 echo "=== SSM successfully uninstalled ==="
+rm -- "$0"
