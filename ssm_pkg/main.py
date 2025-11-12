@@ -14,7 +14,6 @@ from rich.layout import Layout
 from rich.text import Text
 from rich.style import Style
 import keyboard
-import shlex
 
 console = Console()
 prev_net = None
@@ -33,16 +32,12 @@ speed_samples_lock = threading.Lock()
 def listen_for_keys():
     global kill_requested, network_tab_active
     while True:
-        keyboard.wait()
-        # single-key toggles; don't block on wait for each key press
-        if keyboard.is_pressed("k"):
-            kill_requested = True
-            # small debounce
-            time.sleep(0.2)
-        elif keyboard.is_pressed("n"):
-            network_tab_active = not network_tab_active
-            # debounce so toggling doesn't fire multiple times
-            time.sleep(0.3)
+        event = keyboard.read_event()
+        if event.event_type == keyboard.KEY_DOWN:
+            if event.name == "k":
+                kill_requested = True
+            elif event.name == "n":
+                network_tab_active = not network_tab_active
 
 # ---------------- Helper Functions ----------------
 def get_color(value: float) -> str:
@@ -161,7 +156,6 @@ def build_bars(stats):
     return bars_table
 
 def build_network_table(stats):
-    # if network tab not active, show the existing simple upload/download rates
     net_table = Table.grid(expand=True)
     net_table.add_column("Upload", justify="right")
     net_table.add_column("Download", justify="right")
@@ -211,53 +205,44 @@ def build_disk_preview():
 
     return Panel(table, title="Disk Preview", style="bold yellow")
 
-# NEW: build the speedtest subpanel inside the same network panel
+# NEW: build the speedtest subpanel
 def build_speedtest_panel():
     global speed_samples, speedtest_running, speedtest_result_text, speedtest_error
 
     panel_table = Table.grid(expand=True)
     panel_table.add_column("col", ratio=1)
 
-    # Title/header line
     if speedtest_running:
         title_text = "[bold green]Network Speedtest (running) — press 'n' to close[/bold green]"
     else:
         title_text = "[bold green]Network Speedtest — press 'n' to close[/bold green]"
 
-    # Build a small "Ookla-like" graph from recent speed samples.
-    # speed_samples holds Mbps floats. We'll show last N as bars.
     with speed_samples_lock:
         samples = list(speed_samples)
 
     if len(samples) == 0:
         graph = "No samples yet. Start a test by toggling the network panel."
     else:
-        # compute max to scale bars (avoid zero)
         max_mbps = max(max(samples), 1e-6)
-        # limit to last 30 samples for display
         display = samples[-30:]
         bars = []
         for mbps in display:
-            # scale 0..1 to 0..12 bar blocks
             blocks = int((mbps / max_mbps) * 12)
             blocks = max(1, blocks) if mbps > 0 else 0
-            bars.append("▁▂▃▄▅▆▇█"[min(7, blocks)])  # coarse block selection
+            bars.append("▁▂▃▄▅▆▇█"[min(7, blocks)])
         graph = "".join(bars)
 
     rows = []
     rows.append(Text(title_text))
     rows.append(Text("\nLive graph: " + graph))
-    # show latest value if present
     if samples:
         latest = samples[-1]
         rows.append(Text(f"\nLatest throughput: {latest:.2f} Mbps"))
-    # show final result text or error if present
     if speedtest_error:
         rows.append(Text(f"\n[red]Error: {speedtest_error}[/red]"))
     elif not speedtest_running and speedtest_result_text:
         rows.append(Text(f"\n{speedtest_result_text}"))
 
-    # Put into panel table
     for r in rows:
         panel_table.add_row(r)
 
@@ -275,7 +260,6 @@ def render_layout(layout, stats, top_procs):
     layout["header"].update(Panel(header_text + "\n" + commands_text, style="bold white"))
     layout["bars"].update(build_bars(stats))
 
-    # network panel: either original small rates or the speedtest sub-panel if toggled
     if network_tab_active:
         layout["network"].update(build_speedtest_panel())
     else:
@@ -321,13 +305,7 @@ def kill_process_prompt(top_procs, live):
 
 # ---------------- Speedtest Runner ----------------
 def run_speedtest_background():
-    """
-    Runs speedtest-cli in a background thread and samples net counters to create a live graph.
-    Uses psutil to gather instantaneous throughput while speedtest-cli is running.
-    """
     global speedtest_running, speedtest_result_text, speedtest_error, speed_samples
-
-    # guard: don't start if already running
     if speedtest_running:
         return
 
@@ -339,11 +317,8 @@ def run_speedtest_background():
         with speed_samples_lock:
             speed_samples = []
 
-        # Prepare to launch speedtest-cli. We call it via subprocess so we don't depend on import.
-        cmd = ["speedtest-cli", "--simple"]  # classic sivel speedtest-cli
-        # If binary not found, capture exception
+        cmd = ["speedtest-cli", "--simple"]
         try:
-            # Start the process. We'll poll psutil.net_io_counters while it runs.
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         except FileNotFoundError:
             speedtest_error = "speedtest-cli not found. Install it (pip install speedtest-cli or apt install speedtest-cli)."
@@ -354,43 +329,29 @@ def run_speedtest_background():
             speedtest_running = False
             return
 
-        # baseline counters
         last = psutil.net_io_counters()
         last_time = time.time()
 
-        # While process is alive sample counters at ~5 samples per second
         try:
             while proc.poll() is None:
                 now = time.time()
                 cur = psutil.net_io_counters()
                 dt = now - last_time if (now - last_time) > 0 else 1e-6
-                # bytes/sec -> Mbps
                 down_bps = (cur.bytes_recv - last.bytes_recv) / dt
                 up_bps = (cur.bytes_sent - last.bytes_sent) / dt
-                # approximate direction: when download phase is dominant, recv will spike; when upload, send will spike
-                # record a single sample representing the higher of the two (so graph shows saturation)
                 sample_mbps = max(down_bps, up_bps) * 8.0 / 1_000_000.0
                 with speed_samples_lock:
                     speed_samples.append(sample_mbps)
-                    # keep it bounded
                     if len(speed_samples) > 200:
                         speed_samples = speed_samples[-200:]
                 last = cur
                 last_time = now
                 time.sleep(0.18)
         except Exception:
-            # sampling error shouldn't crash
             pass
 
-        # After process completes, capture stdout/stderr
         out, err = proc.communicate(timeout=10)
-        # parse the classic speedtest-cli --simple output:
-        # typically:
-        # Ping: 12.345 ms
-        # Download: 95.12 Mbit/s
-        # Upload: 12.34 Mbit/s
         if out:
-            # preserve the raw output as a user-friendly summary
             speedtest_result_text = out.strip()
         if err:
             speedtest_error = (err.strip() + (f"\n{speedtest_error}" if speedtest_error else "")) if err.strip() else speedtest_error
@@ -417,9 +378,7 @@ def main():
                 top_procs = get_top_processes()
                 render_layout(layout, stats, top_procs)
 
-                # If user toggled the network panel on and no speedtest is running, start one
                 if network_tab_active and not speedtest_running and not speedtest_result_text and not speedtest_error:
-                    # start background speedtest + sampling
                     run_speedtest_background()
 
                 if kill_requested:
