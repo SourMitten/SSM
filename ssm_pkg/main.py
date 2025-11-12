@@ -16,28 +16,39 @@ from rich.style import Style
 import keyboard
 
 console = Console()
+
+# ---------------- Global State ----------------
 prev_net = None
 prev_time = None
 kill_requested = False
-
-# NEW: network tab state and speedtest state
-network_tab_active = False
+freeze_requested = False
+speedtest_toggle = False
 speedtest_running = False
 speedtest_result_text = ""
 speedtest_error = None
-speed_samples = []  # holds recent Mbps samples (download during test then upload)
+speed_samples = []
 speed_samples_lock = threading.Lock()
 
-# ---------------- Key Listener ----------------
-def listen_for_keys():
-    global kill_requested, network_tab_active
+# ---------------- Key Listeners ----------------
+def listen_for_kill():
+    global kill_requested
     while True:
-        event = keyboard.read_event()
-        if event.event_type == keyboard.KEY_DOWN:
-            if event.name == "k":
-                kill_requested = True
-            elif event.name == "n":
-                network_tab_active = not network_tab_active
+        keyboard.wait("k")
+        kill_requested = True
+
+def listen_for_freeze():
+    global freeze_requested
+    while True:
+        keyboard.wait("f")
+        freeze_requested = not freeze_requested
+
+def listen_for_speedtest_toggle():
+    global speedtest_toggle
+    while True:
+        keyboard.wait("n")
+        speedtest_toggle = not speedtest_toggle
+        if speedtest_toggle:
+            run_speedtest_background()
 
 # ---------------- Helper Functions ----------------
 def get_color(value: float) -> str:
@@ -63,7 +74,6 @@ def format_bytes_per_sec(bps: float) -> str:
 
 def get_system_stats():
     global prev_net, prev_time
-
     cpu = psutil.cpu_percent(interval=None)
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
@@ -205,48 +215,13 @@ def build_disk_preview():
 
     return Panel(table, title="Disk Preview", style="bold yellow")
 
-# NEW: build the speedtest subpanel
 def build_speedtest_panel():
-    global speed_samples, speedtest_running, speedtest_result_text, speedtest_error
-
-    panel_table = Table.grid(expand=True)
-    panel_table.add_column("col", ratio=1)
-
-    if speedtest_running:
-        title_text = "[bold green]Network Speedtest (running) — press 'n' to close[/bold green]"
-    else:
-        title_text = "[bold green]Network Speedtest — press 'n' to close[/bold green]"
-
     with speed_samples_lock:
-        samples = list(speed_samples)
-
-    if len(samples) == 0:
-        graph = "No samples yet. Start a test by toggling the network panel."
-    else:
-        max_mbps = max(max(samples), 1e-6)
-        display = samples[-30:]
-        bars = []
-        for mbps in display:
-            blocks = int((mbps / max_mbps) * 12)
-            blocks = max(1, blocks) if mbps > 0 else 0
-            bars.append("▁▂▃▄▅▆▇█"[min(7, blocks)])
-        graph = "".join(bars)
-
-    rows = []
-    rows.append(Text(title_text))
-    rows.append(Text("\nLive graph: " + graph))
-    if samples:
-        latest = samples[-1]
-        rows.append(Text(f"\nLatest throughput: {latest:.2f} Mbps"))
-    if speedtest_error:
-        rows.append(Text(f"\n[red]Error: {speedtest_error}[/red]"))
-    elif not speedtest_running and speedtest_result_text:
-        rows.append(Text(f"\n{speedtest_result_text}"))
-
-    for r in rows:
-        panel_table.add_row(r)
-
-    return Panel(panel_table, title="Speedtest (speedtest-cli)", style="bold green")
+        graph_line = "".join("█" if x > 0 else " " for x in speed_samples[-50:])
+        text = speedtest_result_text if speedtest_result_text else "(running...)" if speedtest_running else "(not started)"
+        error = f"[red]{speedtest_error}[/red]" if speedtest_error else ""
+    panel_content = Text(graph_line + "\n" + text + "\n" + error)
+    return Panel(panel_content, title="Speedtest Panel", style="bold magenta", expand=True)
 
 def render_layout(layout, stats, top_procs):
     header_text = Text(
@@ -254,19 +229,16 @@ def render_layout(layout, stats, top_procs):
         style="bold green"
     )
     commands_text = Text(
-        "Commands: Ctrl+C = Exit | Press 'k' to kill a process | Press 'n' to toggle network speedtest panel",
+        "Commands: Ctrl+C = Exit | k = Kill | n = Speedtest | f = Freeze",
         style="bold cyan"
     )
     layout["header"].update(Panel(header_text + "\n" + commands_text, style="bold white"))
     layout["bars"].update(build_bars(stats))
-
-    if network_tab_active:
-        layout["network"].update(build_speedtest_panel())
-    else:
-        layout["network"].update(build_network_table(stats))
-
+    layout["network"].update(build_network_table(stats))
     layout["processes"].update(build_process_table(top_procs))
     layout["disk_preview"].update(build_disk_preview())
+    if speedtest_toggle:
+        layout["network"].update(build_speedtest_panel())
 
 # ---------------- Kill Process ----------------
 def kill_proc_tree(pid):
@@ -283,11 +255,9 @@ def kill_proc_tree(pid):
 def kill_process_prompt(top_procs, live):
     live.stop()
     console.clear()
-
     console.print("[bold yellow]Kill a process[/bold yellow]")
     for i, p in enumerate(top_procs, 1):
         console.print(f"[cyan]{i}[/cyan]: {p['name']} (PID {p['pid']}) CPU {p['cpu_percent']:.1f}%")
-
     try:
         console.print()
         choice = int(console.input("[bold white]Enter process number to kill (0 to cancel): [/bold white]"))
@@ -303,12 +273,8 @@ def kill_process_prompt(top_procs, live):
         time.sleep(1)
         live.start()
 
-# ---------------- Speedtest Runner ----------------
+# ---------------- Speedtest Integration ----------------
 def run_speedtest_background():
-    """
-    Starts speedtest-cli in a background thread, captures live output line by line,
-    and updates the speed_samples for Ookla-style graph and result text.
-    """
     global speedtest_running, speedtest_result_text, speedtest_error, speed_samples
     if speedtest_running:
         return
@@ -327,10 +293,10 @@ def run_speedtest_background():
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1  # line buffered
+                bufsize=1
             )
         except FileNotFoundError:
-            speedtest_error = "speedtest-cli not found. Install it (pip install speedtest-cli or apt install speedtest-cli)."
+            speedtest_error = "speedtest-cli not found."
             speedtest_running = False
             return
         except Exception as e:
@@ -342,14 +308,12 @@ def run_speedtest_background():
         last_time = time.time()
 
         try:
-            # read stdout line by line
             for line in proc.stdout:
                 line = line.strip()
                 if line:
                     with speed_samples_lock:
                         speedtest_result_text += line + "\n"
 
-                # update graph sample based on network delta
                 now = time.time()
                 cur = psutil.net_io_counters()
                 dt = max(now - last_time, 1e-6)
@@ -373,23 +337,25 @@ def run_speedtest_background():
 
 # ---------------- Main ----------------
 def main():
-    global prev_net, prev_time, kill_requested, network_tab_active
+    global prev_net, prev_time, kill_requested
 
     prev_net = psutil.net_io_counters()
     prev_time = time.time()
 
-    threading.Thread(target=listen_for_keys, daemon=True).start()
+    # Start key listeners
+    threading.Thread(target=listen_for_kill, daemon=True).start()
+    threading.Thread(target=listen_for_freeze, daemon=True).start()
+    threading.Thread(target=listen_for_speedtest_toggle, daemon=True).start()
 
     layout = create_layout()
-    with Live(layout, refresh_per_second=4, screen=True) as live:
+    with Live(layout, refresh_per_second=2, screen=True) as live:
         try:
             while True:
                 stats = get_system_stats()
                 top_procs = get_top_processes()
-                render_layout(layout, stats, top_procs)
 
-                if network_tab_active and not speedtest_running and not speedtest_result_text and not speedtest_error:
-                    run_speedtest_background()
+                if not freeze_requested:
+                    render_layout(layout, stats, top_procs)
 
                 if kill_requested:
                     kill_requested = False
