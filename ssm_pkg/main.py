@@ -159,59 +159,74 @@ def build_disk_preview():
 def run_speedtest(panel):
     global speedtest_running, speedtest_final
     speedtest_running = True
+
     try:
         st = speedtest.Speedtest()
         st.get_best_server()
-        download_bps = upload_bps = 0
 
-        download_task = st.download
-        upload_task = st.upload
-
-        # Animate both download and upload
+        # ---- Fake animated progress bars ----
         download_bar = Progress(
             "[bold green]Download ",
             BarColumn(bar_width=None, complete_style=Style(color="green")),
-            TextColumn("{task.percentage:>3.0f}% {task.fields[speed]}"),
+            TextColumn("{task.percentage:>3.0f}%")
         )
         upload_bar = Progress(
             "[bold cyan]Upload   ",
             BarColumn(bar_width=None, complete_style=Style(color="cyan")),
-            TextColumn("{task.percentage:>3.0f}% {task.fields[speed]}"),
+            TextColumn("{task.percentage:>3.0f}%")
         )
-        download_id = download_bar.add_task("download", total=100, speed="0 Mbps")
-        upload_id = upload_bar.add_task("upload", total=100, speed="0 Mbps")
 
+        dl_id = download_bar.add_task("download", total=100)
+        ul_id = upload_bar.add_task("upload", total=100)
+
+        # Show the download bar first
         panel.update(Panel(download_bar, title="Speedtest Download", style="bold green"))
 
-        # Run download
-        for i in range(20):
-            partial = download_task()
-            percent = min((i+1)*5, 100)
-            download_bar.update(download_id, completed=percent, speed=format_speed(partial))
-            panel.update(Panel(download_bar, title="Speedtest Download", style="bold green"))
-            time.sleep(0.2)
+        # Animate 1 second fake bar while real download runs
+        def animate_bar(bar, task_id):
+            for i in range(100):
+                bar.update(task_id, completed=i + 1)
+                time.sleep(0.01)
 
-        # Run upload
-        for i in range(20):
-            partial = upload_task()
-            percent = min((i+1)*5, 100)
-            upload_bar.update(upload_id, completed=percent, speed=format_speed(partial))
-            panel.update(Panel(upload_bar, title="Speedtest Upload", style="bold cyan"))
-            time.sleep(0.2)
+        # Run download + animate at same time
+        dl_thread = threading.Thread(target=lambda: st.download())
+        dl_anim = threading.Thread(target=lambda: animate_bar(download_bar, dl_id))
 
-        # Final results
+        dl_thread.start()
+        dl_anim.start()
+
+        dl_thread.join()
+        dl_anim.join()
+
+        # Show upload bar
+        panel.update(Panel(upload_bar, title="Speedtest Upload", style="bold cyan"))
+
+        # Same trick for upload
+        ul_thread = threading.Thread(target=lambda: st.upload())
+        ul_anim = threading.Thread(target=lambda: animate_bar(upload_bar, ul_id))
+
+        ul_thread.start()
+        ul_anim.start()
+
+        ul_thread.join()
+        ul_anim.join()
+
+        # ---- Final results ----
         download_bps = st.results.download
         upload_bps = st.results.upload
         speedtest_final = (download_bps, upload_bps)
+
         panel.update(
             Panel(
                 Text(f"Final Outputs:\nUp.: {format_speed(upload_bps)}\nDown.: {format_speed(download_bps)}", justify="center"),
-                title="Speedtest Complete", style="bold green"
+                title="Speedtest Complete",
+                style="bold green",
             )
         )
 
     except Exception as e:
         panel.update(Panel(Text(f"Speedtest failed: {e}", justify="center"), style="bold red"))
+
     finally:
         speedtest_running = False
 
