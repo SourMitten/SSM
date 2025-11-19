@@ -1,2 +1,4 @@
-psutil
-rich
+psutil 
+rich 
+keyboard 
+speedtest-cli
