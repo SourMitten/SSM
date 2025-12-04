@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # uninstall.sh — completely removes Sour System Monitor (SSM)
-# Robust, idiot-proof, self-deleting
 
 set -euo pipefail  # exit on error, undefined variable, or failed pipe
 
-# Determine absolute path of the SSM directory (where this script lives)
+# Determine absolute path of SSM directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SSM_DIR_NAME="$(basename "$SCRIPT_DIR")"
 
@@ -14,7 +13,7 @@ CONFIG_DIR="$HOME/.config/ssm"
 
 echo "=== Uninstalling Sour System Monitor (SSM) ==="
 
-# Safety check: confirm we're actually in an SSM directory
+# Safety check: confirm we're actually in /SSM
 if [[ "$SSM_DIR_NAME" != "SSM" ]]; then
     echo "[!] Warning: Script not located in an 'SSM' directory. Aborting."
     exit 1
@@ -44,8 +43,7 @@ else
     echo "User config directory not found at $CONFIG_DIR"
 fi
 
-# Confirm with user before removing the entire local SSM directory
-echo
+# Confirm with user before removing /SSM entirely
 echo "This will delete the entire local SSM folder at: $SCRIPT_DIR"
 read -p "Are you sure you want to continue? [y/N]: " confirm
 if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
