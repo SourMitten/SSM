@@ -4,13 +4,12 @@ A beginner-friendly terminal-based system monitor for Ubuntu/Linux.
 
 ---
 
-## Features
+## Main Features
 
-- CPU, memory, and disk usage with color-coded bars
-- Network speed (auto-scaled in KB/MB/GB per second)
-- Top 10 processes by CPU usage
 - Hostname and system uptime display
-- Refreshes every second
+- CPU, memory, and disk usage with color-coded bars
+- Top 10 processes by CPU usage (and the ability to kill these processes)
+- Network speed (provided by speedtest.net)
 - Clean, beginner-friendly interface
 
 ---
