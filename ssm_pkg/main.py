@@ -23,7 +23,7 @@ speedtest_active = False
 speedtest_running = False
 speedtest_final = None
 
-# ---------------- Key Listener ----------------
+# ---------------- Key Listener (Keyboard)----------------
 def listen_for_keys():
     global kill_requested, network_visible, freeze, speedtest_active
     while True:
@@ -37,7 +37,7 @@ def listen_for_keys():
             elif key.name == "f":
                 freeze = not freeze
 
-# ---------------- Helper Functions ----------------
+# ---------------- Helper Functions (Rich + psutil)----------------
 def get_color(value: float) -> str:
     if value < 50:
         return "green"
@@ -76,7 +76,7 @@ def get_top_processes(limit=10):
     procs = sorted(procs, key=lambda p: p['cpu_percent'], reverse=True)
     return procs[:limit]
 
-# ---------------- Layout ----------------
+# ---------------- Layout (Rich + psutil)----------------
 def create_layout():
     layout = Layout()
     layout.split_column(
@@ -155,7 +155,7 @@ def build_disk_preview():
             continue
     return Panel(table, title="Disk Preview", style="bold yellow")
 
-# ---------------- Speedtest ----------------
+# ---------------- Speedtest (speedtest-cli)----------------
 def run_speedtest(panel):
     global speedtest_running, speedtest_final
     speedtest_running = True
@@ -164,7 +164,7 @@ def run_speedtest(panel):
         st = speedtest.Speedtest()
         st.get_best_server()
 
-        # ---- Fake animated progress bars ----
+        # ---- Fake the progress bars ----
         download_bar = Progress(
             "[bold green]Download ",
             BarColumn(bar_width=None, complete_style=Style(color="green")),
