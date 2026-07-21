@@ -181,7 +181,7 @@ def build_bars(stats):
     
     # Disk
     bars_table.add_row(disk_bar)
-    bars_table.add_row(Text("  Storage", style="dim yellow"))
+    bars_table.add_row(Text("  Primary Storage Drive", style="dim yellow"))
     
     # GPU
     bars_table.add_row(gpu_bar)
