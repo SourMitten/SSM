@@ -72,6 +72,7 @@ While the program is running, use the following keyboard shortcuts:
 
 ## ⚠️ Notes
 - **Linux Permissions**: Running `sudo ssm` is mandatory on Linux systems to allow low-level hardware access and process management. 
+- **GPU Usage Bar Issues**: on Linux, if an AMD GPU is detected, it attempts to read /sys/class/drm/card0/device/gpu_busy_percent. If it succeeds, the usage bar will reflect it. If it fails (e.g., due to permissions or different driver layouts), it safely defaults to 0.0% while still showing the correct GPU name. Same goes for Intel Integrated Graphics.
 
 ---
 
