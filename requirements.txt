@@ -1,4 +1,6 @@
-psutil 
-rich 
-keyboard 
+psutil
+py-cpuinfo
+pynvml
+rich
+keyboard
 speedtest-cli
