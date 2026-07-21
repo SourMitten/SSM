@@ -14,12 +14,14 @@ from rich.text import Text
 from rich.style import Style
 import keyboard
 import speedtest
+
 # Replaced GPUtil with pynvml for Python 3.12+ compatibility
 try:
     import pynvml
     NVML_AVAILABLE = True
 except ImportError:
     NVML_AVAILABLE = False
+
 # Added py-cpuinfo
 from cpuinfo import get_cpu_info
 
@@ -101,6 +103,7 @@ def get_system_stats():
     return {
         "cpu": cpu,
         "mem_used": mem.percent,
+        "mem_total": mem.total,  # <-- ADDED TOTAL RAM
         "disk_used": disk.percent,
         "uptime": uptime,
         "hostname": hostname,
@@ -124,7 +127,7 @@ def create_layout():
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=4),
-        Layout(name="bars", size=10),  # Increased from 6 to fit the new hardware name rows
+        Layout(name="bars", size=10),
         Layout(name="bottom")
     )
     layout["bottom"].split_row(
@@ -177,7 +180,8 @@ def build_bars(stats):
     
     # Memory
     bars_table.add_row(mem_bar)
-    bars_table.add_row(Text("  System Memory", style="dim magenta"))
+    mem_total_gb = stats["mem_total"] / (1024 ** 3)
+    bars_table.add_row(Text(f"  {mem_total_gb:.1f} GB Total RAM", style="dim magenta"))  # <-- UPDATED LABEL
     
     # Disk
     bars_table.add_row(disk_bar)
@@ -229,7 +233,6 @@ def run_speedtest(panel):
         st = speedtest.Speedtest()
         st.get_best_server()
         
-        # ---- Fake animated progress bars ----
         download_bar = Progress(
             "[bold green]Download ",
             BarColumn(bar_width=None, complete_style=Style(color="green")),
@@ -244,16 +247,13 @@ def run_speedtest(panel):
         dl_id = download_bar.add_task("download", total=100)
         ul_id = upload_bar.add_task("upload", total=100)
         
-        # Show the download bar first
         panel.update(Panel(download_bar, title="Speedtest Download", style="bold green"))
         
-        # Animate 1 second fake bar while real download runs
         def animate_bar(bar, task_id):
             for i in range(100):
                 bar.update(task_id, completed=i + 1)
                 time.sleep(0.01)
                 
-        # Run download + animate at same time
         dl_thread = threading.Thread(target=lambda: st.download())
         dl_anim = threading.Thread(target=lambda: animate_bar(download_bar, dl_id))
         dl_thread.start()
@@ -261,10 +261,8 @@ def run_speedtest(panel):
         dl_thread.join()
         dl_anim.join()
         
-        # Show upload bar
         panel.update(Panel(upload_bar, title="Speedtest Upload", style="bold cyan"))
         
-        # Same trick for upload
         ul_thread = threading.Thread(target=lambda: st.upload())
         ul_anim = threading.Thread(target=lambda: animate_bar(upload_bar, ul_id))
         ul_thread.start()
@@ -272,7 +270,6 @@ def run_speedtest(panel):
         ul_thread.join()
         ul_anim.join()
         
-        # ---- Final results ----
         download_bps = st.results.download
         upload_bps = st.results.upload
         speedtest_final = (download_bps, upload_bps)
@@ -306,7 +303,7 @@ def render_layout(layout, stats, top_procs):
     
     if network_visible:
         if speedtest_running:
-            pass  # The thread updates the panel directly
+            pass
         elif speedtest_final:
             download_bps, upload_bps = speedtest_final
             layout["network"].update(
@@ -373,19 +370,19 @@ def main():
                     kill_requested = False
                     kill_process_prompt(top_procs, live)
                 
-                # Trigger Speedtest
                 if network_visible and speedtest_active and not speedtest_running:
                     speedtest_active = False
                     threading.Thread(target=run_speedtest, args=(layout["network"],), daemon=True).start()
                 time.sleep(0.2)
         except KeyboardInterrupt:
             console.print("\n[red]Exiting Sour CLI Sys Monitor...[/red]")
-    # Shutdown NVML if it was initialized
     if NVML_AVAILABLE:
         try:
             pynvml.nvmlShutdown()
         except:
             pass
 
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
