@@ -3,6 +3,8 @@ import psutil
 import time
 import socket
 import threading
+import platform
+import subprocess
 from datetime import timedelta
 from rich.console import Console
 from rich.table import Table
@@ -67,6 +69,86 @@ def format_speed(bps: float) -> str:
     mbps = bps / 1_000_000
     return f"{mbps:.2f} Mbps"
 
+def get_gpu_info():
+    """Detects GPU name and usage across NVIDIA, AMD, Intel, and macOS."""
+    gpu_name = "No GPU"
+    gpu_usage = 0.0
+    
+    # 1. Try NVIDIA via pynvml first
+    if NVML_AVAILABLE:
+        try:
+            device_count = pynvml.nvmlDeviceGetCount()
+            if device_count > 0:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                name = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(name, bytes):
+                    name = name.decode('utf-8')
+                gpu_name = name
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                gpu_usage = util.gpu
+                return gpu_name, gpu_usage
+        except Exception:
+            pass # Fall back to other methods if pynvml fails
+
+    # 2. Fallback for AMD / Intel / Other GPUs (Name detection)
+    system_os = platform.system()
+    try:
+        if system_os == "Windows":
+            # Try modern PowerShell first (wmic is deprecated in newer Windows 11)
+            try:
+                result = subprocess.run(
+                    ["powershell", "-Command", "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"],
+                    capture_output=True, text=True, check=True, timeout=3
+                )
+                lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+                if lines:
+                    gpu_name = ", ".join(lines)
+            except Exception:
+                # Fallback to wmic
+                result = subprocess.run(
+                    ["wmic", "path", "win32_VideoController", "get", "name"],
+                    capture_output=True, text=True, check=True, timeout=3
+                )
+                lines = [line.strip() for line in result.stdout.split('\n') if line.strip() and line.strip().lower() != "name"]
+                if lines:
+                    gpu_name = ", ".join(lines)
+                    
+        elif system_os == "Linux":
+            result = subprocess.run(
+                ["lspci", "-nn"], capture_output=True, text=True, check=True, timeout=3
+            )
+            gpu_lines = [line for line in result.stdout.split('\n') if 'VGA compatible controller' in line or '3D controller' in line or 'Display controller' in line]
+            if gpu_lines:
+                names = []
+                for line in gpu_lines:
+                    parts = line.split(': ', 1)
+                    if len(parts) > 1:
+                        names.append(parts[1].strip())
+                    else:
+                        names.append(line.strip())
+                gpu_name = ", ".join(names)
+            
+            # Bonus: Try to get AMD GPU usage on Linux via sysfs
+            if "AMD" in gpu_name.upper() or "ADVANCED MICRO DEVICES" in gpu_name.upper():
+                try:
+                    with open("/sys/class/drm/card0/device/gpu_busy_percent", "r") as f:
+                        gpu_usage = float(f.read().strip())
+                except Exception:
+                    pass # Silently fail if permissions or file doesn't exist
+                    
+        elif system_os == "Darwin": # macOS
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"], capture_output=True, text=True, check=True, timeout=3
+            )
+            for line in result.stdout.split('\n'):
+                if "Chipset Model:" in line:
+                    gpu_name = line.split(":", 1)[1].strip()
+                    break
+    except Exception:
+        pass # Keep default "No GPU" if all OS-specific checks fail
+
+    return gpu_name, gpu_usage
+
 def get_system_stats():
     cpu = psutil.cpu_percent(interval=None)
     mem = psutil.virtual_memory()
@@ -82,28 +164,13 @@ def get_system_stats():
     except Exception:
         cpu_name = 'Unknown CPU'
 
-    # Fetch GPU Stats using pynvml
-    gpu_usage = 0.0
-    gpu_name = 'No GPU'
-    if NVML_AVAILABLE:
-        try:
-            device_count = pynvml.nvmlDeviceGetCount()
-            if device_count > 0:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                gpu_name = pynvml.nvmlDeviceGetName(handle)
-                # Handle bytes vs string difference in pynvml versions
-                if isinstance(gpu_name, bytes):
-                    gpu_name = gpu_name.decode('utf-8')
-                
-                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                gpu_usage = util.gpu
-        except Exception:
-            pass
+    # Fetch GPU Stats (NVIDIA, AMD, Intel, etc.)
+    gpu_name, gpu_usage = get_gpu_info()
 
     return {
         "cpu": cpu,
         "mem_used": mem.percent,
-        "mem_total": mem.total,  # <-- ADDED TOTAL RAM
+        "mem_total": mem.total,
         "disk_used": disk.percent,
         "uptime": uptime,
         "hostname": hostname,
@@ -181,7 +248,7 @@ def build_bars(stats):
     # Memory
     bars_table.add_row(mem_bar)
     mem_total_gb = stats["mem_total"] / (1024 ** 3)
-    bars_table.add_row(Text(f"  {mem_total_gb:.1f} GB Total RAM", style="dim magenta"))  # <-- UPDATED LABEL
+    bars_table.add_row(Text(f"  {mem_total_gb:.1f} GB Total RAM", style="dim magenta"))
     
     # Disk
     bars_table.add_row(disk_bar)
