@@ -14,6 +14,14 @@ from rich.text import Text
 from rich.style import Style
 import keyboard
 import speedtest
+# Replaced GPUtil with pynvml for Python 3.12+ compatibility
+try:
+    import pynvml
+    NVML_AVAILABLE = True
+except ImportError:
+    NVML_AVAILABLE = False
+# Added py-cpuinfo
+from cpuinfo import get_cpu_info
 
 console = Console()
 kill_requested = False
@@ -23,7 +31,14 @@ speedtest_active = False
 speedtest_running = False
 speedtest_final = None
 
-# ---------------- Key Listener (Keyboard)----------------
+# Initialize NVML if available
+if NVML_AVAILABLE:
+    try:
+        pynvml.nvmlInit()
+    except pynvml.NVMLError:
+        NVML_AVAILABLE = False
+
+# ---------------- Key Listener ----------------
 def listen_for_keys():
     global kill_requested, network_visible, freeze, speedtest_active
     while True:
@@ -37,7 +52,7 @@ def listen_for_keys():
             elif key.name == "f":
                 freeze = not freeze
 
-# ---------------- Helper Functions (Rich + psutil)----------------
+# ---------------- Helper Functions ----------------
 def get_color(value: float) -> str:
     if value < 50:
         return "green"
@@ -58,12 +73,40 @@ def get_system_stats():
     uptime_seconds = int(time.time() - boot_time)
     uptime = str(timedelta(seconds=uptime_seconds)).split('.')[0]
     hostname = socket.gethostname()
+
+    # Fetch CPU Name
+    try:
+        cpu_name = get_cpu_info().get('brand_raw', 'Unknown CPU')
+    except Exception:
+        cpu_name = 'Unknown CPU'
+
+    # Fetch GPU Stats using pynvml
+    gpu_usage = 0.0
+    gpu_name = 'No GPU'
+    if NVML_AVAILABLE:
+        try:
+            device_count = pynvml.nvmlDeviceGetCount()
+            if device_count > 0:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                gpu_name = pynvml.nvmlDeviceGetName(handle)
+                # Handle bytes vs string difference in pynvml versions
+                if isinstance(gpu_name, bytes):
+                    gpu_name = gpu_name.decode('utf-8')
+                
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                gpu_usage = util.gpu
+        except Exception:
+            pass
+
     return {
         "cpu": cpu,
         "mem_used": mem.percent,
         "disk_used": disk.percent,
         "uptime": uptime,
-        "hostname": hostname
+        "hostname": hostname,
+        "cpu_name": cpu_name,
+        "gpu_name": gpu_name,
+        "gpu_usage": gpu_usage
     }
 
 def get_top_processes(limit=10):
@@ -76,12 +119,12 @@ def get_top_processes(limit=10):
     procs = sorted(procs, key=lambda p: p['cpu_percent'], reverse=True)
     return procs[:limit]
 
-# ---------------- Layout (Rich + psutil)----------------
+# ---------------- Layout ----------------
 def create_layout():
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=4),
-        Layout(name="bars", size=6),
+        Layout(name="bars", size=10),  # Increased from 6 to fit the new hardware name rows
         Layout(name="bottom")
     )
     layout["bottom"].split_row(
@@ -98,6 +141,7 @@ def build_bars(stats):
     cpu_color = get_color(stats["cpu"])
     mem_color = get_color(stats["mem_used"])
     disk_color = get_color(stats["disk_used"])
+    gpu_color = get_color(stats["gpu_usage"])
 
     cpu_bar = Progress(
         "[bold blue]CPU   ",
@@ -114,13 +158,35 @@ def build_bars(stats):
         BarColumn(bar_width=None, complete_style=Style(color=disk_color)),
         TextColumn("{task.percentage:>3.0f}%")
     )
+    gpu_bar = Progress(
+        "[bold red]GPU   ",
+        BarColumn(bar_width=None, complete_style=Style(color=gpu_color)),
+        TextColumn("{task.percentage:>3.0f}%")
+    )
+
     cpu_bar.add_task("CPU", total=100, completed=stats["cpu"])
     mem_bar.add_task("Memory", total=100, completed=stats["mem_used"])
     disk_bar.add_task("Disk", total=100, completed=stats["disk_used"])
+    gpu_bar.add_task("GPU", total=100, completed=stats["gpu_usage"])
+
     bars_table = Table.grid(expand=True)
+    
+    # CPU
     bars_table.add_row(cpu_bar)
+    bars_table.add_row(Text(f"  {stats['cpu_name']}", style="dim cyan"))
+    
+    # Memory
     bars_table.add_row(mem_bar)
+    bars_table.add_row(Text("  System Memory", style="dim magenta"))
+    
+    # Disk
     bars_table.add_row(disk_bar)
+    bars_table.add_row(Text("  Storage", style="dim yellow"))
+    
+    # GPU
+    bars_table.add_row(gpu_bar)
+    bars_table.add_row(Text(f"  {stats['gpu_name']}", style="dim red"))
+
     return bars_table
 
 def build_process_table(top_procs):
@@ -155,16 +221,15 @@ def build_disk_preview():
             continue
     return Panel(table, title="Disk Preview", style="bold yellow")
 
-# ---------------- Speedtest (speedtest-cli)----------------
+# ---------------- Speedtest ----------------
 def run_speedtest(panel):
     global speedtest_running, speedtest_final
     speedtest_running = True
-
     try:
         st = speedtest.Speedtest()
         st.get_best_server()
-
-        # ---- Fake the progress bars ----
+        
+        # ---- Fake animated progress bars ----
         download_bar = Progress(
             "[bold green]Download ",
             BarColumn(bar_width=None, complete_style=Style(color="green")),
@@ -175,47 +240,43 @@ def run_speedtest(panel):
             BarColumn(bar_width=None, complete_style=Style(color="cyan")),
             TextColumn("{task.percentage:>3.0f}%")
         )
-
+        
         dl_id = download_bar.add_task("download", total=100)
         ul_id = upload_bar.add_task("upload", total=100)
-
+        
         # Show the download bar first
         panel.update(Panel(download_bar, title="Speedtest Download", style="bold green"))
-
+        
         # Animate 1 second fake bar while real download runs
         def animate_bar(bar, task_id):
             for i in range(100):
                 bar.update(task_id, completed=i + 1)
                 time.sleep(0.01)
-
+                
         # Run download + animate at same time
         dl_thread = threading.Thread(target=lambda: st.download())
         dl_anim = threading.Thread(target=lambda: animate_bar(download_bar, dl_id))
-
         dl_thread.start()
         dl_anim.start()
-
         dl_thread.join()
         dl_anim.join()
-
+        
         # Show upload bar
         panel.update(Panel(upload_bar, title="Speedtest Upload", style="bold cyan"))
-
+        
         # Same trick for upload
         ul_thread = threading.Thread(target=lambda: st.upload())
         ul_anim = threading.Thread(target=lambda: animate_bar(upload_bar, ul_id))
-
         ul_thread.start()
         ul_anim.start()
-
         ul_thread.join()
         ul_anim.join()
-
+        
         # ---- Final results ----
         download_bps = st.results.download
         upload_bps = st.results.upload
         speedtest_final = (download_bps, upload_bps)
-
+        
         panel.update(
             Panel(
                 Text(f"Final Outputs:\nUpload: {format_speed(upload_bps)}\nDownload: {format_speed(download_bps)}", justify="center"),
@@ -223,10 +284,8 @@ def run_speedtest(panel):
                 style="bold green",
             )
         )
-
     except Exception as e:
         panel.update(Panel(Text(f"Speedtest failed: {e}", justify="center"), style="bold red"))
-
     finally:
         speedtest_running = False
 
@@ -244,7 +303,7 @@ def render_layout(layout, stats, top_procs):
     layout["bars"].update(build_bars(stats))
     layout["processes"].update(build_process_table(top_procs))
     layout["disk_preview"].update(build_disk_preview())
-
+    
     if network_visible:
         if speedtest_running:
             pass  # The thread updates the panel directly
@@ -299,35 +358,34 @@ def kill_process_prompt(top_procs, live):
 # ---------------- Main ----------------
 def main():
     global kill_requested, speedtest_active
-
     threading.Thread(target=listen_for_keys, daemon=True).start()
     layout = create_layout()
-
     with Live(layout, refresh_per_second=4, screen=True) as live:
         try:
             while True:
                 stats = get_system_stats()
                 top_procs = get_top_processes()
-
                 if freeze:
                     time.sleep(0.2)
                     continue
-
                 render_layout(layout, stats, top_procs)
-
                 if kill_requested:
                     kill_requested = False
                     kill_process_prompt(top_procs, live)
-
+                
                 # Trigger Speedtest
                 if network_visible and speedtest_active and not speedtest_running:
                     speedtest_active = False
                     threading.Thread(target=run_speedtest, args=(layout["network"],), daemon=True).start()
-
                 time.sleep(0.2)
-
         except KeyboardInterrupt:
             console.print("\n[red]Exiting Sour CLI Sys Monitor...[/red]")
+    # Shutdown NVML if it was initialized
+    if NVML_AVAILABLE:
+        try:
+            pynvml.nvmlShutdown()
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
