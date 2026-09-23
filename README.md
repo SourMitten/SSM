@@ -32,18 +32,35 @@ A beautiful, real-time command-line system monitor built with Python and the `ri
    ```cmd
    python3 -m pip install -r requirements.txt
    ```
-3. Create a shortcut to `main.py` on your desktop for quick and easy access. Double-click the shortcut to run the monitor.
+4. Create a shortcut to `main.py` on your desktop for quick and easy access. Double-click the shortcut to run the monitor.
 
 ### 🐧 Linux (Ubuntu / Debian-based)
-1. Install the required Python dependencies via pip:
-   ```bash
-   pip3 install psutil py-cpuinfo pynvml rich keyboard speedtest-cli --break-system-packages
-   ```
-   or
-   ```bash
-   pip3 install -r requirements.txt
-   ```
-   **OR** use **Option 1: LNFinal (SSM Setup)** in [UBAutoSetup](https://github.com/SourMitten/UBAutoSetup) to handle dependencies automatically.
+1. Install the required Python dependencies<br>
+   1.1. via pip:
+      ```bash
+      python -m pip install psutil py-cpuinfo nvidia-ml-py rich keyboard speedtest-cli
+      ```
+      or
+      ```bash
+      python -m pip install -r requirements.txt
+      ```
+   1.2. via pacman:
+      ```bash
+      sudo pacman -S python-psutil python-py-cpuinfo python-nvidia-ml-py python-rich python-keyboard python-speedtest-cli
+      ```
+      or
+      ```bash
+      sudo pacman -S --needed $(< requirements-arch.txt)
+      ```
+   1.3. via apt:
+      ```bash
+      sudo apt install python3-psutil python3-cpuinfo python3-pynvml python3-rich python3-keyboard python3-speedtest-cli
+      ```
+      or
+      ```bash
+      sudo apt install $(< requirements-apt.txt)
+      ```
+   **OR** use **Option 1: LNFinal (SSM Setup)** in [UBAutoSetup](https://github.com/SourMitten/UBAutoSetup) or [ArchAutoSetup](https://github.com/SourMitten/ArchAutoSetup) to handle dependencies automatically.
 
 3. Run the installation script to install the `ssm` command globally:
    ```bash
@@ -78,6 +95,6 @@ While the program is running, use the following keyboard shortcuts:
 
 ## 📜 License & Credits
 Created by SourMitten.  
-For automated Linux setup, check out [UBAutoSetup](https://github.com/SourMitten/UBAutoSetup).
+For automated Linux setup, check out [UBAutoSetup](https://github.com/SourMitten/UBAutoSetup) or [ArchAutoSetup](https://github.com/SourMitten/ArchAutoSetup).
 
 *Enjoy monitoring your system in style!* 🎨💻
