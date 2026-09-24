@@ -1,6 +1,6 @@
 psutil
 py-cpuinfo
-pynvml
+nvidia-ml-py
 rich
 keyboard
 speedtest-cli
