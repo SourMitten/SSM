@@ -1,0 +1,6 @@
+python3-psutil
+python3-py-cpuinfo
+python3-pynvml
+python3-rich
+python3-keyboard
+python3-speedtest-cli
