@@ -1,0 +1,6 @@
+python-psutil
+python-py-cpuinfo
+python-nvidia-ml-py
+python-rich
+python-keyboard
+python-speedtest-cli
